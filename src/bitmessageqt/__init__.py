@@ -87,6 +87,7 @@ class MyForm(QtGui.QMainWindow):
         #FILE MENU and other buttons
         QtCore.QObject.connect(self.ui.actionExit, QtCore.SIGNAL("triggered()"), self.quit)
         QtCore.QObject.connect(self.ui.actionManageKeys, QtCore.SIGNAL("triggered()"), self.click_actionManageKeys)
+        QtCore.QObject.connect(self.ui.actionDeleteAllTrashedMessages, QtCore.SIGNAL("triggered()"), self.click_actionDeleteAllTrashedMessages)
         QtCore.QObject.connect(self.ui.actionRegenerateDeterministicAddresses, QtCore.SIGNAL("triggered()"), self.click_actionRegenerateDeterministicAddresses)
         QtCore.QObject.connect(self.ui.pushButtonNewAddress, QtCore.SIGNAL("clicked()"), self.click_NewAddressDialog)
         QtCore.QObject.connect(self.ui.comboBoxSendFrom, QtCore.SIGNAL("activated(int)"),self.redrawLabelFrom)
@@ -393,23 +394,7 @@ class MyForm(QtGui.QMainWindow):
             self.ui.tableWidgetAddressBook.setItem(0,1,newItem)
 
         #Initialize the Subscriptions
-        shared.sqlLock.acquire()
-        shared.sqlSubmitQueue.put('SELECT label, address, enabled FROM subscriptions')
-        shared.sqlSubmitQueue.put('')
-        queryreturn = shared.sqlReturnQueue.get()
-        shared.sqlLock.release()
-        for row in queryreturn:
-            label, address, enabled = row
-            self.ui.tableWidgetSubscriptions.insertRow(0)
-            newItem =  QtGui.QTableWidgetItem(unicode(label,'utf-8'))
-            if not enabled:
-                newItem.setTextColor(QtGui.QColor(128,128,128))
-            self.ui.tableWidgetSubscriptions.setItem(0,0,newItem)
-            newItem =  QtGui.QTableWidgetItem(address)
-            newItem.setFlags( QtCore.Qt.ItemIsSelectable |  QtCore.Qt.ItemIsEnabled )
-            if not enabled:
-                newItem.setTextColor(QtGui.QColor(128,128,128))
-            self.ui.tableWidgetSubscriptions.setItem(0,1,newItem)
+        self.rerenderSubscriptions()
 
         #Initialize the Blacklist or Whitelist
         if shared.config.get('bitmessagesettings', 'blackwhitelist') == 'black':
@@ -447,6 +432,8 @@ class MyForm(QtGui.QMainWindow):
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL("incrementNumberOfPubkeysProcessed()"), self.incrementNumberOfPubkeysProcessed)
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL("incrementNumberOfBroadcastsProcessed()"), self.incrementNumberOfBroadcastsProcessed)
         QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL("setStatusIcon(PyQt_PyObject)"), self.setStatusIcon)
+        QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL("rerenderInboxFromLabels()"), self.rerenderInboxFromLabels)
+        QtCore.QObject.connect(self.UISignalThread, QtCore.SIGNAL("rerenderSubscriptions()"), self.rerenderSubscriptions)
         self.UISignalThread.start()
 
 #Below this point, it would be good if all of the necessary global data structures were initialized.
@@ -460,12 +447,10 @@ class MyForm(QtGui.QMainWindow):
         else:
             if sys.platform[0:3] == 'win':
                 self.setWindowFlags(Qt.Window)
-                self.show()
-                self.setWindowState(self.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive)
-            else:
-                self.showMaximized()
-            #Here is what I believe might be required for darwin:
-                #self.setWindowState(self.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive)
+            #else:
+                #self.showMaximized()
+            self.show()
+            self.setWindowState(self.windowState() & ~QtCore.Qt.WindowMinimized | QtCore.Qt.WindowActive)
             self.activateWindow()
 
 
@@ -782,6 +767,22 @@ class MyForm(QtGui.QMainWindow):
             if reply == QtGui.QMessageBox.Yes:
                 self.openKeysFile()
 
+    def click_actionDeleteAllTrashedMessages(self):
+        if QtGui.QMessageBox.question(self, 'Delete trash?',"Are you sure you want to delete all trashed messages?", QtGui.QMessageBox.Yes, QtGui.QMessageBox.No) == QtGui.QMessageBox.No:
+            return
+        shared.sqlLock.acquire()
+        shared.sqlSubmitQueue.put('''delete from inbox where folder='trash' ''')
+        shared.sqlSubmitQueue.put('')
+        shared.sqlReturnQueue.get()
+        shared.sqlSubmitQueue.put('''delete from sent where folder='trash' ''')
+        shared.sqlSubmitQueue.put('')
+        shared.sqlReturnQueue.get()
+        shared.sqlSubmitQueue.put('commit') #Commit takes no parameters and returns nothing
+        shared.sqlSubmitQueue.put('vacuum')
+        shared.sqlSubmitQueue.put('')
+        shared.sqlReturnQueue.get()
+        shared.sqlLock.release()
+
     def click_actionRegenerateDeterministicAddresses(self):
         self.regenerateAddressesDialogInstance = regenerateAddressesDialog(self)
         if self.regenerateAddressesDialogInstance.exec_():
@@ -795,7 +796,7 @@ class MyForm(QtGui.QMainWindow):
                 #QtCore.QObject.connect(self.addressGenerator, SIGNAL("writeNewAddressToTable(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"), self.writeNewAddressToTable)
                 #QtCore.QObject.connect(self.addressGenerator, QtCore.SIGNAL("updateStatusBar(PyQt_PyObject)"), self.updateStatusBar)
                 #self.addressGenerator.start()
-                shared.addressGeneratorQueue.put((addressVersionNumber,streamNumberForAddress,"regenerated deterministic address",self.regenerateAddressesDialogInstance.ui.spinBoxNumberOfAddressesToMake.value(),self.regenerateAddressesDialogInstance.ui.lineEditPassphrase.text().toUtf8(),self.regenerateAddressesDialogInstance.ui.checkBoxEighteenByteRipe.isChecked()))
+                shared.addressGeneratorQueue.put(('createDeterministicAddresses',addressVersionNumber,streamNumberForAddress,"regenerated deterministic address",self.regenerateAddressesDialogInstance.ui.spinBoxNumberOfAddressesToMake.value(),self.regenerateAddressesDialogInstance.ui.lineEditPassphrase.text().toUtf8(),self.regenerateAddressesDialogInstance.ui.checkBoxEighteenByteRipe.isChecked()))
                 self.ui.tabWidget.setCurrentIndex(3)
 
     def openKeysFile(self):
@@ -914,7 +915,7 @@ class MyForm(QtGui.QMainWindow):
 
             if self.actionStatus != None:
                 self.actionStatus.setText('Not Connected')
-                self.tray.setIcon(QtGui.QIcon("images/can-icon-24px-red.png"))
+                self.tray.setIcon(QtGui.QIcon(":/newPrefix/images/can-icon-24px-red.png"))
                 #self.trayIcon.show()
         if color == 'yellow':
             if self.statusBar().currentMessage() == 'Warning: You are currently not connected. Bitmessage will do the work necessary to send the message but it won\'t send until you connect.':
@@ -928,7 +929,7 @@ class MyForm(QtGui.QMainWindow):
 
             if self.actionStatus != None:
                 self.actionStatus.setText('Connected')
-                self.tray.setIcon(QtGui.QIcon("images/can-icon-24px-yellow.png"))
+                self.tray.setIcon(QtGui.QIcon(":/newPrefix/images/can-icon-24px-yellow.png"))
         if color == 'green':
             if self.statusBar().currentMessage() == 'Warning: You are currently not connected. Bitmessage will do the work necessary to send the message but it won\'t send until you connect.':
                 self.statusBar().showMessage('')
@@ -940,7 +941,7 @@ class MyForm(QtGui.QMainWindow):
 
             if self.actionStatus != None:
                 self.actionStatus.setText('Connected')
-                self.tray.setIcon(QtGui.QIcon("images/can-icon-24px-green.png"))
+                self.tray.setIcon(QtGui.QIcon(":/newPrefix/images/can-icon-24px-green.png"))
 
     def updateSentItemStatusByHash(self,toRipe,textToDisplay):
         for i in range(self.ui.tableWidgetSent.rowCount()):
@@ -1030,6 +1031,26 @@ class MyForm(QtGui.QMainWindow):
                 for row in queryreturn:
                     toLabel, = row
                     self.ui.tableWidgetSent.item(i,0).setText(unicode(toLabel,'utf-8'))
+
+    def rerenderSubscriptions(self):
+        self.ui.tableWidgetSubscriptions.setRowCount(0)
+        shared.sqlLock.acquire()
+        shared.sqlSubmitQueue.put('SELECT label, address, enabled FROM subscriptions')
+        shared.sqlSubmitQueue.put('')
+        queryreturn = shared.sqlReturnQueue.get()
+        shared.sqlLock.release()
+        for row in queryreturn:
+            label, address, enabled = row
+            self.ui.tableWidgetSubscriptions.insertRow(0)
+            newItem =  QtGui.QTableWidgetItem(unicode(label,'utf-8'))
+            if not enabled:
+                newItem.setTextColor(QtGui.QColor(128,128,128))
+            self.ui.tableWidgetSubscriptions.setItem(0,0,newItem)
+            newItem =  QtGui.QTableWidgetItem(address)
+            newItem.setFlags( QtCore.Qt.ItemIsSelectable |  QtCore.Qt.ItemIsEnabled )
+            if not enabled:
+                newItem.setTextColor(QtGui.QColor(128,128,128))
+            self.ui.tableWidgetSubscriptions.setItem(0,1,newItem)
 
     def click_pushButtonSend(self):
         self.statusBar().showMessage('')
@@ -1200,24 +1221,6 @@ class MyForm(QtGui.QMainWindow):
             self.ui.comboBoxSendFrom.setCurrentIndex(0)
 
 
-
-    """def connectObjectToSignals(self,object):
-        QtCore.QObject.connect(object, QtCore.SIGNAL("updateStatusBar(PyQt_PyObject)"), self.updateStatusBar)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("displayNewInboxMessage(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"), self.displayNewInboxMessage)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("displayNewSentMessage(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"), self.displayNewSentMessage)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("updateSentItemStatusByHash(PyQt_PyObject,PyQt_PyObject)"), self.updateSentItemStatusByHash)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("updateSentItemStatusByAckdata(PyQt_PyObject,PyQt_PyObject)"), self.updateSentItemStatusByAckdata)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("updateNetworkStatusTab()"), self.updateNetworkStatusTab)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("incrementNumberOfMessagesProcessed()"), self.incrementNumberOfMessagesProcessed)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("incrementNumberOfPubkeysProcessed()"), self.incrementNumberOfPubkeysProcessed)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("incrementNumberOfBroadcastsProcessed()"), self.incrementNumberOfBroadcastsProcessed)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("setStatusIcon(PyQt_PyObject)"), self.setStatusIcon)
-
-    #This function exists because of the API. The API thread starts an address generator thread and must somehow connect the address generator's signals to the QApplication thread. This function is used to connect the slots and signals.
-    def connectObjectToAddressGeneratorSignals(self,object):
-        QtCore.QObject.connect(object, SIGNAL("writeNewAddressToTable(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"), self.writeNewAddressToTable)
-        QtCore.QObject.connect(object, QtCore.SIGNAL("updateStatusBar(PyQt_PyObject)"), self.updateStatusBar)"""
-
     #This function is called by the processmsg function when that function receives a message to an address that is acting as a pseudo-mailing-list. The message will be broadcast out. This function puts the message on the 'Sent' tab.
     def displayNewSentMessage(self,toAddress,toLabel,fromAddress,subject,message,ackdata):
         try:
@@ -1358,7 +1361,7 @@ class MyForm(QtGui.QMainWindow):
 
         if self.NewSubscriptionDialogInstance.exec_():
             if self.NewSubscriptionDialogInstance.ui.labelSubscriptionAddressCheck.text() == 'Address is valid.':
-                #First we must check to see if the address is already in the address book. The user cannot add it again or else it will cause problems when updating and deleting the entry.
+                #First we must check to see if the address is already in the subscriptions list. The user cannot add it again or else it will cause problems when updating and deleting the entry.
                 shared.sqlLock.acquire()
                 t = (addBMIfNotPresent(str(self.NewSubscriptionDialogInstance.ui.lineEditSubscriptionAddress.text())),)
                 shared.sqlSubmitQueue.put('''select * from subscriptions where address=?''')
@@ -1605,7 +1608,7 @@ class MyForm(QtGui.QMainWindow):
                 #QtCore.QObject.connect(self.addressGenerator, SIGNAL("writeNewAddressToTable(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"), self.writeNewAddressToTable)
                 #QtCore.QObject.connect(self.addressGenerator, QtCore.SIGNAL("updateStatusBar(PyQt_PyObject)"), self.updateStatusBar)
                 #self.addressGenerator.start()
-                shared.addressGeneratorQueue.put((3,streamNumberForAddress,str(self.dialog.ui.newaddresslabel.text().toUtf8()),1,"",self.dialog.ui.checkBoxEighteenByteRipe.isChecked()))
+                shared.addressGeneratorQueue.put(('createRandomAddress',3,streamNumberForAddress,str(self.dialog.ui.newaddresslabel.text().toUtf8()),1,"",self.dialog.ui.checkBoxEighteenByteRipe.isChecked()))
             else:
                 if self.dialog.ui.lineEditPassphrase.text() != self.dialog.ui.lineEditPassphraseAgain.text():
                     QMessageBox.about(self, "Passphrase mismatch", "The passphrase you entered twice doesn\'t match. Try again.")
@@ -1618,7 +1621,7 @@ class MyForm(QtGui.QMainWindow):
                     #QtCore.QObject.connect(self.addressGenerator, SIGNAL("writeNewAddressToTable(PyQt_PyObject,PyQt_PyObject,PyQt_PyObject)"), self.writeNewAddressToTable)
                     #QtCore.QObject.connect(self.addressGenerator, QtCore.SIGNAL("updateStatusBar(PyQt_PyObject)"), self.updateStatusBar)
                     #self.addressGenerator.start()
-                    shared.addressGeneratorQueue.put((3,streamNumberForAddress,"unused deterministic address",self.dialog.ui.spinBoxNumberOfAddressesToMake.value(),self.dialog.ui.lineEditPassphrase.text().toUtf8(),self.dialog.ui.checkBoxEighteenByteRipe.isChecked()))
+                    shared.addressGeneratorQueue.put(('createDeterministicAddresses',3,streamNumberForAddress,"unused deterministic address",self.dialog.ui.spinBoxNumberOfAddressesToMake.value(),self.dialog.ui.lineEditPassphrase.text().toUtf8(),self.dialog.ui.checkBoxEighteenByteRipe.isChecked()))
         else:
             print 'new address dialog box rejected'
 
@@ -2287,6 +2290,10 @@ class UISignaler(QThread):
                 self.emit(SIGNAL("incrementNumberOfBroadcastsProcessed()"))
             elif command == 'setStatusIcon':
                 self.emit(SIGNAL("setStatusIcon(PyQt_PyObject)"),data)
+            elif command == 'rerenderInboxFromLabels':
+                self.emit(SIGNAL("rerenderInboxFromLabels()"))
+            elif command == 'rerenderSubscriptions':
+                self.emit(SIGNAL("rerenderSubscriptions()"))
             else:
                 sys.stderr.write('Command sent to UISignaler not recognized: %s\n' % command)
 
