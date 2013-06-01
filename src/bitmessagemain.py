@@ -62,7 +62,10 @@ class outgoingSynSender(threading.Thread):
         global alreadyAttemptedConnectionsListResetTime
         while True:
             #time.sleep(999999)#I sometimes use this to prevent connections for testing.
-            if len(selfInitiatedConnections[self.streamNumber]) < 8: #maximum number of outgoing connections = 8
+            #rather than putting a giant block in this if statement, we check and either break or do the giant block
+            #if len(selfInitiatedConntections[self.streamNumber]) >= 8: #maximum number of outgoing connections = 8
+            #    continue
+            if len(selfInitiatedConnections[self.streamNumber]) < 8: 
                 random.seed()
                 HOST, = random.sample(shared.knownNodes[self.streamNumber],  1)
                 alreadyAttemptedConnectionsListLock.acquire()
@@ -179,7 +182,7 @@ class outgoingSynSender(threading.Thread):
                     sys.stderr.write('An exception has occurred in the outgoingSynSender thread that was not caught by other exception types: %s\n' % err)
             time.sleep(0.1)
 
-#Only one singleListener thread will ever exist. It creates the receiveDataThread and sendDataThread for each incoming connection. Note that it cannot set the stream number because it is not known yet- the other node will have to tell us its stream number in a version message. If we don't care about their stream, we will close the connection (within the recversion function of the recieveData thread)
+#Only one singleListener thread will ever exist. It creates the receiveDataThread and sendDataThread for each incoming connection. Note that it cannot set the stream number because it is not known yet- the other node will have to tell us its stream number in a version message. If we don't care about their stream, we will close the connection (within the recursion function of the receiveData thread)
 class singleListener(threading.Thread):
     def __init__(self):
         threading.Thread.__init__(self)
@@ -3850,6 +3853,10 @@ if __name__ == "__main__":
             print 'Loading existing config files from', shared.appdata
         except:
             #This appears to be the first time running the program; there is no config file (or it cannot be accessed). Create config file.
+            #seems it would be better to ship with a default config file in the
+            #codebase, which could just be tossed over to the user's home/app
+            #whatever directory, rather than keep all the default settings
+            #here in the code
             shared.config.add_section('bitmessagesettings')
             shared.config.set('bitmessagesettings','settingsversion','5')
             shared.config.set('bitmessagesettings','port','8444')
